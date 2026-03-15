@@ -1,105 +1,236 @@
 # Home Assistant Music Like Mirror
 
-Base version of a custom Home Assistant add-on that:
+A custom Home Assistant add-on that mirrors new **liked songs** between Spotify and YouTube Music.
 
-- reads your Spotify liked tracks
-- reads your YouTube Music liked tracks
-- stores them in a local SQLite database
-- mirrors each new like to the other service
-- never removes anything
-- never unlikes anything
-- does not check the remote service first, it just attempts the add
+It is intentionally append-only:
 
-This is intentionally a rough but usable starting point for further refinement in Codex.
+- It reads liked songs from both services.
+- It stores discovered events in a local SQLite database.
+- It attempts to mirror new likes to the other service.
+- It **never** unlikes, deletes, or removes tracks.
 
-## What this version does
+---
 
-- FastAPI web UI exposed via Home Assistant Ingress
-- SQLite database stored in `/data/music_like_mirror/mirror.db`
-- append-only event ingestion
-- manual sync button
-- background polling loop
-- simple track matching using `title + first artist-ish text`
-- writes to:
-  - YouTube Music likes via `ytmusicapi.rate_song(..., LIKE)`
-  - Spotify saved tracks via Web API
-- optional Spotify playlist fallback if you prefer mirroring into a playlist instead of likes
+## Current capabilities
 
-## What this version does not do yet
+- Home Assistant add-on with Ingress UI (`ingress_port: 8099`)
+- Built-in settings page for Spotify + YouTube Music credentials
+- Manual "Run sync now" trigger
+- Background polling loop (default every 15 minutes)
+- Local persistence under `/data/music_like_mirror/`
+  - `settings.json`
+  - `mirror.db`
+- Activity and attempt logs visible in the UI
 
-- polished Spotify OAuth setup inside the UI
-- proper retry queue / backoff
-- better matching heuristics
-- per-direction enable/disable toggles
-- review / approve queue
-- companion Home Assistant integration entities
-- strict ingress IP filtering
-- unit tests
+## Current limitations
 
-## Important caveats
+- No guided Spotify OAuth flow in the UI (you must provide a refresh token)
+- Matching is currently simple (`title + artist-ish` normalization)
+- No retry queue/backoff strategy yet
+- No approval queue for ambiguous matches
 
-### Spotify auth
+---
 
-This scaffold expects you to already have:
-
-- Spotify client ID
-- Spotify client secret
-- Spotify refresh token
-
-It does **not** yet include a polished in-app OAuth dance. That should be one of the first Codex refinements.
-
-Spotify library read/write requires the relevant library scopes in the app authorization flow. Spotify documents the library endpoints and scopes in the Web API docs. citeturn179843search1turn179843search4turn179843search6turn179843search8
-
-### YouTube Music auth
-
-This scaffold expects you to paste a valid `headers_auth.json` or equivalent auth JSON into the settings page. `ytmusicapi` is unofficial and works by emulating browser requests, so it is more brittle than the Spotify side. Its docs expose both `get_liked_songs()` and `rate_song()`. citeturn179843search2turn179843search5turn179843search17
-
-### Home Assistant add-on shape
-
-The add-on uses Home Assistant's normal add-on structure with `config.yaml`, Docker build files, and Ingress enabled. Home Assistant's developer docs document `config.yaml` and the `ingress: true` / `ingress_port` setup. citeturn179843search0turn179843search3
-
-## Folder layout
+## Repository layout
 
 ```text
 .
-├── build.yaml
-├── config.yaml
-├── Dockerfile
+├── repository.yaml
 ├── README.md
-└── rootfs
-    └── app
+└── music_like_mirror
+    ├── build.yaml
+    ├── config.yaml
+    ├── Dockerfile
+    └── rootfs/app
         ├── app.py
         ├── db.py
         ├── requirements.txt
         ├── run.sh
-        └── services
-            ├── normalise.py
-            ├── settings.py
-            ├── spotify_client.py
-            ├── sync_engine.py
-            └── ytmusic_client.py
+        └── services/
 ```
 
-## Suggested next Codex tasks
+---
 
-1. Add real Spotify OAuth setup in the UI.
-2. Add a settings toggle for mirror direction:
-   - Spotify -> YT Music
-   - YT Music -> Spotify
-3. Add a retry queue for failed matches.
-4. Add a track review page for ambiguous matches.
-5. Add a proper Home Assistant service endpoint and status sensors.
-6. Add logs page and export page.
-7. Harden security around secrets and ingress access.
+## End-to-end setup (detailed)
 
-## Notes on behaviour
+Follow this from top to bottom to avoid common setup issues.
 
-This project is built around your stated rules:
+### 1) Add this repository to Home Assistant
 
-- no unlikes
-- no deletes
-- no remote existence check before writing
-- local processed-event tracking only
-- okay to attempt the same like again on the target service
+1. In Home Assistant, open **Settings → Add-ons → Add-on Store**.
+2. Open the **three-dot menu** (top-right) → **Repositories**.
+3. Add your repository URL:
+   - `https://github.com/tizudyzae/ha-music-like-mirror`
+4. Close and refresh the Add-on Store.
+5. Find **Music Like Mirror** and open it.
 
-That makes the architecture much less haunted.
+### 2) Install + start the add-on
+
+1. Click **Install**.
+2. (Optional) Toggle **Start on boot** and **Watchdog**.
+3. Click **Start**.
+4. Open **Log** tab and confirm the app starts without crashing.
+
+Expected startup behavior:
+
+- The add-on launches Uvicorn on port `8099`.
+- The app creates `/data/music_like_mirror` automatically.
+- The DB file (`mirror.db`) is created on first start.
+
+### 3) Open the web UI
+
+- Use **Open Web UI** from the add-on page (recommended via Ingress).
+- If using direct port access, ensure networking/firewall allows the mapped port.
+
+### 4) Prepare Spotify credentials
+
+You must provide:
+
+- `spotify_client_id`
+- `spotify_client_secret`
+- `spotify_refresh_token`
+
+And the token must include scopes that allow reading/writing library tracks.
+
+In the add-on UI, fill:
+
+- **Spotify client ID**
+- **Spotify client secret**
+- **Spotify refresh token**
+- Optional: **Spotify playlist ID** (fallback target)
+- Optional: **Spotify market** (default `GB`)
+
+> If refresh token/scopes are wrong, connection tests and sync attempts will fail even if client ID/secret are valid.
+
+### 5) Prepare YouTube Music credentials
+
+You must provide authentication JSON compatible with `ytmusicapi`.
+
+In the UI:
+
+- Paste JSON into **YouTube Music auth JSON**.
+- If using oauth-token style auth, also paste client credentials into
+  **YouTube Music OAuth client credentials JSON**.
+
+> Invalid JSON, expired auth, or missing OAuth credential pairing are common causes of failures.
+
+### 6) Save settings and validate connections
+
+1. Click **Save settings**.
+2. Click **Test Spotify + YouTube Music connections**.
+3. Verify both services report success.
+
+If either side fails:
+
+- Re-check pasted secrets for whitespace/newline corruption.
+- Re-generate Spotify refresh token with correct scopes.
+- Re-export/recreate YouTube Music auth JSON.
+
+### 7) Run your first sync
+
+1. Click **Run sync now**.
+2. Review these UI panels:
+   - **Status**
+   - **Recent like events**
+   - **Recent sync attempts**
+   - **Verbose activity log**
+
+What "healthy" looks like:
+
+- Event count increases after polling/manual sync.
+- Attempt rows appear with success statuses (or clear actionable errors).
+- Logs show poll start/finish and service operations.
+
+---
+
+## Configuration reference (UI fields)
+
+- `spotify_client_id`: Spotify app client ID
+- `spotify_client_secret`: Spotify app client secret
+- `spotify_refresh_token`: refresh token with required scopes
+- `spotify_playlist_id`: optional fallback target instead of liked songs
+- `spotify_market`: market for Spotify lookup behavior (default `GB`)
+- `ytmusic_auth_json`: auth JSON (headers auth or oauth token JSON)
+- `ytmusic_oauth_credentials_json`: required when using oauth token JSON mode
+- `poll_minutes`: background polling interval (`1` to `1440`)
+- `match_mode`: currently `simple`
+- `dry_run`: when enabled, records actions without writing likes to targets
+
+---
+
+## How to verify your setup is actually working
+
+Use this checklist after configuration:
+
+1. **Addon is running**
+   - Add-on state is "Started" in Home Assistant.
+2. **Both integrations configured**
+   - Status panel shows Spotify = configured, YT Music = configured.
+3. **Connection test passes**
+   - Use the built-in test button.
+4. **Manual sync executes**
+   - Trigger sync and confirm logs show a full run.
+5. **DB is accumulating data**
+   - Event and attempt counters increase over time.
+6. **No repeated auth errors in logs**
+   - If auth errors repeat, reissue credentials before further debugging.
+
+If all 6 are true, the base setup is usually correct and any remaining issues are typically match quality or source-data edge cases.
+
+---
+
+## Troubleshooting quick guide
+
+### Add-on starts, but UI is blank/unreachable
+
+- Prefer opening from **Open Web UI** (Ingress path) first.
+- Restart add-on after install/update.
+- Check add-on logs for Uvicorn startup errors.
+
+### "Configured" shows false after saving
+
+- Settings may not have been valid JSON (for YT fields).
+- Re-open Settings page and confirm values persisted.
+- Ensure `/data` mount is writable (the add-on uses `/data/music_like_mirror`).
+
+### Sync runs but nothing mirrors
+
+- Turn off `dry_run`.
+- Confirm there are new likes to ingest since last run.
+- Check **Recent sync attempts** for lookup/match failures.
+
+### Spotify failures
+
+- Refresh token invalid/expired/revoked.
+- Missing required scopes for saved tracks.
+- Wrong client ID/secret pair for the token.
+
+### YouTube Music failures
+
+- Stale/invalid auth JSON.
+- Incorrect JSON format pasted.
+- Missing OAuth credential JSON when required.
+
+---
+
+## Data and behavior notes
+
+- Data path: `/data/music_like_mirror/`
+- SQLite DB: `/data/music_like_mirror/mirror.db`
+- Settings JSON: `/data/music_like_mirror/settings.json`
+- Behavior is intentionally append-only and idempotent-friendly:
+  - no unlikes
+  - no deletes
+  - no "remove from target" logic
+
+---
+
+## Development notes
+
+Potential next improvements:
+
+1. Built-in Spotify OAuth helper flow in UI
+2. Better track matching/scoring
+3. Retry queue with backoff
+4. Direction toggles (Spotify→YT, YT→Spotify)
+5. HA entities/services for observability and control
