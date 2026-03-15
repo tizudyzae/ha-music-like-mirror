@@ -93,6 +93,12 @@ async def sync_now() -> JSONResponse:
     return JSONResponse(result)
 
 
+@app.post("/api/test-connections")
+async def test_connections() -> JSONResponse:
+    result = await engine.test_connections()
+    return JSONResponse(result)
+
+
 @app.get("/api/events")
 async def events(limit: int = 100) -> JSONResponse:
     rows = await db.get_recent_events(limit=min(max(limit, 1), 500))
@@ -146,6 +152,8 @@ INDEX_HTML = r"""
       <h2>Status</h2>
       <div id="status">Loading...</div>
       <button onclick="runSync()">Run sync now</button>
+      <button class="secondary" onclick="testConnections()">Test Spotify + YouTube Music connections</button>
+      <div id="connection_test_result" class="small muted"></div>
     </div>
     <div class="card">
       <h2>Settings</h2>
@@ -232,6 +240,21 @@ async function loadAll() {
   document.getElementById('logs').innerHTML = renderLogs(logs.items || []);
 }
 
+let lastLogSignature = '';
+async function refreshLogs() {
+  try {
+    const logs = await fetchJSON('./api/logs?limit=200');
+    const items = logs.items || [];
+    const signature = JSON.stringify(items[items.length - 1] || {});
+    if (signature !== lastLogSignature) {
+      document.getElementById('logs').innerHTML = renderLogs(items);
+      lastLogSignature = signature;
+    }
+  } catch (err) {
+    document.getElementById('status').innerHTML = '<span class="bad">' + esc(err.message) + '</span>';
+  }
+}
+
 function renderTable(items, keys) {
   const head = '<tr>' + keys.map(k => `<th>${esc(k)}</th>`).join('') + '</tr>';
   const rows = items.map(item => '<tr>' + keys.map(k => `<td>${esc(item[k] || '')}</td>`).join('') + '</tr>').join('');
@@ -282,9 +305,20 @@ async function runSync() {
   await loadAll();
 }
 
+async function testConnections() {
+  const result = await fetchJSON('./api/test-connections', { method: 'POST' });
+  const spotify = result.spotify || {};
+  const ytmusic = result.ytmusic || {};
+  document.getElementById('connection_test_result').innerHTML = `
+    <div>Spotify: <span class="${spotify.ok ? 'ok' : 'bad'}">${spotify.ok ? 'ok' : 'failed'}</span> - ${esc(spotify.message || '')}</div>
+    <div>YouTube Music: <span class="${ytmusic.ok ? 'ok' : 'bad'}">${ytmusic.ok ? 'ok' : 'failed'}</span> - ${esc(ytmusic.message || '')}</div>
+  `;
+}
+
 loadAll().catch(err => {
   document.getElementById('status').innerHTML = '<span class="bad">' + esc(err.message) + '</span>';
 });
+setInterval(refreshLogs, 2000);
 </script>
 </body>
 </html>
