@@ -104,6 +104,12 @@ async def attempts(limit: int = 100) -> JSONResponse:
     return JSONResponse({"items": rows})
 
 
+@app.get("/api/logs")
+async def logs(limit: int = 200) -> JSONResponse:
+    rows = engine.recent_logs(limit=min(max(limit, 1), 1000))
+    return JSONResponse({"items": rows})
+
+
 INDEX_HTML = r"""
 <!doctype html>
 <html>
@@ -175,6 +181,12 @@ INDEX_HTML = r"""
       <div id="attempts"></div>
     </div>
   </div>
+
+  <div class="card" style="margin-top:16px;">
+    <h2>Verbose activity log</h2>
+    <p class="muted small">Detailed timeline of what the addon is doing right now (startup, scheduled checks, sync actions, dry-run behavior, and errors).</p>
+    <div id="logs"></div>
+  </div>
 </div>
 <script>
 async function fetchJSON(url, options) {
@@ -188,11 +200,12 @@ function esc(s) {
 }
 
 async function loadAll() {
-  const [status, settings, events, attempts] = await Promise.all([
+  const [status, settings, events, attempts, logs] = await Promise.all([
     fetchJSON('./api/status'),
     fetchJSON('./api/settings'),
     fetchJSON('./api/events?limit=25'),
-    fetchJSON('./api/attempts?limit=25')
+    fetchJSON('./api/attempts?limit=25'),
+    fetchJSON('./api/logs?limit=200')
   ]);
 
   document.getElementById('status').innerHTML = `
@@ -213,12 +226,30 @@ async function loadAll() {
 
   document.getElementById('events').innerHTML = renderTable(events.items, ['source_service','title','artist','liked_at','processed_at']);
   document.getElementById('attempts').innerHTML = renderTable(attempts.items, ['target_service','search_query','status','error_text','attempted_at']);
+  document.getElementById('logs').innerHTML = renderLogs(logs.items || []);
 }
 
 function renderTable(items, keys) {
   const head = '<tr>' + keys.map(k => `<th>${esc(k)}</th>`).join('') + '</tr>';
   const rows = items.map(item => '<tr>' + keys.map(k => `<td>${esc(item[k] || '')}</td>`).join('') + '</tr>').join('');
   return `<table>${head}${rows}</table>`;
+}
+
+function renderLogs(items) {
+  if (!items.length) return '<div class="muted">No log entries yet.</div>';
+  const rows = items.slice().reverse().map(item => {
+    const ctx = JSON.stringify(item.context || {});
+    return `<tr>
+      <td>${esc(item.ts || '')}</td>
+      <td>${esc(item.level || '')}</td>
+      <td>${esc(item.message || '')}</td>
+      <td><code class="small">${esc(ctx)}</code></td>
+    </tr>`;
+  }).join('');
+  return `<table>
+    <tr><th>timestamp</th><th>level</th><th>message</th><th>context</th></tr>
+    ${rows}
+  </table>`;
 }
 
 async function saveSettings() {
