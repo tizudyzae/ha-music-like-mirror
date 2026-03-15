@@ -31,6 +31,7 @@ class SettingsPayload(BaseModel):
     spotify_playlist_id: str = ""
     spotify_market: str = "GB"
     ytmusic_auth_json: str = ""
+    ytmusic_oauth_credentials_json: str = ""
     poll_minutes: int = Field(default=15, ge=1, le=1440)
     match_mode: str = "simple"
     dry_run: bool = False
@@ -158,8 +159,10 @@ INDEX_HTML = r"""
       <input id="spotify_playlist_id">
       <label>Spotify market</label>
       <input id="spotify_market" value="GB">
-      <label>YouTube Music auth JSON (paste full headers_auth.json or oauth json)</label>
+      <label>YouTube Music auth JSON (headers_auth.json or oauth token JSON)</label>
       <textarea id="ytmusic_auth_json"></textarea>
+      <label>YouTube Music OAuth client credentials JSON (required when using oauth token JSON)</label>
+      <textarea id="ytmusic_oauth_credentials_json"></textarea>
       <label>Poll every X minutes</label>
       <input id="poll_minutes" type="number" min="1" max="1440" value="15">
       <label>Match mode</label>
@@ -216,7 +219,7 @@ async function loadAll() {
     <div class="row small muted">running: ${status.engine_state.running ? 'yes' : 'no'} | background loop: ${status.engine_state.background_task ? 'active' : 'idle'}</div>
   `;
 
-  for (const key of ['spotify_client_id','spotify_client_secret','spotify_refresh_token','spotify_playlist_id','spotify_market','ytmusic_auth_json','poll_minutes','match_mode']) {
+  for (const key of ['spotify_client_id','spotify_client_secret','spotify_refresh_token','spotify_playlist_id','spotify_market','ytmusic_auth_json','ytmusic_oauth_credentials_json','poll_minutes','match_mode']) {
     const el = document.getElementById(key);
     if (!el) continue;
     if (el.type === 'checkbox') continue;
@@ -260,6 +263,7 @@ async function saveSettings() {
     spotify_playlist_id: document.getElementById('spotify_playlist_id').value.trim(),
     spotify_market: document.getElementById('spotify_market').value.trim() || 'GB',
     ytmusic_auth_json: document.getElementById('ytmusic_auth_json').value.trim(),
+    ytmusic_oauth_credentials_json: document.getElementById('ytmusic_oauth_credentials_json').value.trim(),
     poll_minutes: parseInt(document.getElementById('poll_minutes').value || '15', 10),
     match_mode: document.getElementById('match_mode').value,
     dry_run: document.getElementById('dry_run').checked,

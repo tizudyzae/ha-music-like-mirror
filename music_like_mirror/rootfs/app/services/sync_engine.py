@@ -114,7 +114,10 @@ class SyncEngine:
                 refresh_token=settings["spotify_refresh_token"],
                 market=settings.get("spotify_market", "GB"),
             )
-            ytmusic = YTMusicClient(settings["ytmusic_auth_json"])
+            ytmusic = YTMusicClient(
+                settings["ytmusic_auth_json"],
+                settings.get("ytmusic_oauth_credentials_json", ""),
+            )
             self._log("debug", "Clients initialized", spotify_market=settings.get("spotify_market", "GB"), dry_run=bool(settings.get("dry_run")))
 
             spotify_new = await self._ingest_spotify(spotify)

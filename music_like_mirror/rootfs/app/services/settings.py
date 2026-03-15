@@ -19,6 +19,7 @@ class SettingsStore:
                 "spotify_playlist_id": "",
                 "spotify_market": "GB",
                 "ytmusic_auth_json": "",
+                "ytmusic_oauth_credentials_json": "",
                 "poll_minutes": 15,
                 "match_mode": "simple",
                 "dry_run": False,
@@ -27,7 +28,7 @@ class SettingsStore:
             data = json.load(f)
         if redact:
             data = deepcopy(data)
-            for key in ["spotify_client_secret", "spotify_refresh_token", "ytmusic_auth_json"]:
+            for key in ["spotify_client_secret", "spotify_refresh_token", "ytmusic_auth_json", "ytmusic_oauth_credentials_json"]:
                 if data.get(key):
                     data[key] = "***saved***"
         return data
@@ -41,6 +42,8 @@ class SettingsStore:
             merged["spotify_refresh_token"] = current.get("spotify_refresh_token", "")
         if data.get("ytmusic_auth_json") == "***saved***":
             merged["ytmusic_auth_json"] = current.get("ytmusic_auth_json", "")
+        if data.get("ytmusic_oauth_credentials_json") == "***saved***":
+            merged["ytmusic_oauth_credentials_json"] = current.get("ytmusic_oauth_credentials_json", "")
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
         with open(self.path, "w", encoding="utf-8") as f:
             json.dump(merged, f, indent=2)
