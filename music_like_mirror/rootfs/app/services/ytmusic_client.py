@@ -10,21 +10,40 @@ from ytmusicapi.models.content.enums import LikeStatus
 
 
 class YTMusicClient:
-    def __init__(self, auth_json_text: str):
+    def __init__(self, auth_json_text: str, oauth_credentials_json_text: str = ""):
         self.auth_json_text = auth_json_text
+        self.oauth_credentials_json_text = oauth_credentials_json_text
         self._tmp_path: str | None = None
         self._client: YTMusic | None = None
 
     def _ensure_client(self) -> YTMusic:
         if self._client is not None:
             return self._client
+
+        parsed_auth = json.loads(self.auth_json_text)
+        oauth_credentials: dict[str, Any] | None = None
+
+        if isinstance(parsed_auth, dict) and "auth" in parsed_auth:
+            embedded_oauth = parsed_auth.get("oauth_credentials")
+            if isinstance(embedded_oauth, dict):
+                oauth_credentials = embedded_oauth
+            parsed_auth = parsed_auth["auth"]
+
+        if self.oauth_credentials_json_text:
+            parsed_oauth = json.loads(self.oauth_credentials_json_text)
+            if isinstance(parsed_oauth, dict):
+                oauth_credentials = parsed_oauth
+
         fd, path = tempfile.mkstemp(prefix="ytmusic_auth_", suffix=".json")
         os.close(fd)
         with open(path, "w", encoding="utf-8") as f:
-            parsed = json.loads(self.auth_json_text)
-            json.dump(parsed, f)
+            json.dump(parsed_auth, f)
         self._tmp_path = path
-        self._client = YTMusic(path)
+
+        if oauth_credentials:
+            self._client = YTMusic(path, oauth_credentials=oauth_credentials)
+        else:
+            self._client = YTMusic(path)
         return self._client
 
     async def get_liked_songs(self, limit: int = 5000) -> list[dict[str, Any]]:
