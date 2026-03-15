@@ -8,6 +8,8 @@ from typing import Any
 from ytmusicapi import YTMusic
 from ytmusicapi.models.content.enums import LikeStatus
 
+OAUTH_TOKEN_KEYS = {"access_token", "refresh_token", "expires_at"}
+
 
 class YTMusicClient:
     def __init__(self, auth_json_text: str, oauth_credentials_json_text: str = ""):
@@ -33,6 +35,18 @@ class YTMusicClient:
             parsed_oauth = json.loads(self.oauth_credentials_json_text)
             if isinstance(parsed_oauth, dict):
                 oauth_credentials = parsed_oauth
+
+        if isinstance(parsed_auth, dict) and "oauth_credentials" in parsed_auth and oauth_credentials is None:
+            embedded_oauth = parsed_auth.get("oauth_credentials")
+            if isinstance(embedded_oauth, dict):
+                oauth_credentials = embedded_oauth
+                parsed_auth = {k: v for k, v in parsed_auth.items() if k != "oauth_credentials"}
+
+        if isinstance(parsed_auth, dict) and OAUTH_TOKEN_KEYS.issubset(parsed_auth.keys()) and oauth_credentials is None:
+            raise ValueError(
+                "OAuth token JSON was provided as YouTube Music auth, but oauth credentials are missing. "
+                "Paste your OAuth credentials JSON in the 'YouTube Music OAuth credentials JSON' field."
+            )
 
         fd, path = tempfile.mkstemp(prefix="ytmusic_auth_", suffix=".json")
         os.close(fd)

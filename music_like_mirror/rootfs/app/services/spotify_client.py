@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import asyncio
 from typing import Any
 
 import httpx
@@ -37,11 +38,25 @@ class SpotifyClient:
         headers = kwargs.pop("headers", {})
         headers["Authorization"] = f"Bearer {token}"
         async with httpx.AsyncClient(timeout=30) as client:
-            response = await client.request(method, f"{SPOTIFY_API_BASE}{path}", headers=headers, **kwargs)
-            if response.status_code == 401:
-                self._access_token = None
-                token = await self._ensure_token()
-                headers["Authorization"] = f"Bearer {token}"
+            response: httpx.Response | None = None
+            for attempt in range(3):
+                response = await client.request(method, f"{SPOTIFY_API_BASE}{path}", headers=headers, **kwargs)
+                if response.status_code == 401 and attempt == 0:
+                    self._access_token = None
+                    token = await self._ensure_token()
+                    headers["Authorization"] = f"Bearer {token}"
+                    continue
+                if response.status_code in {429, 500, 502, 503, 504} and attempt < 2:
+                    retry_after = response.headers.get("Retry-After")
+                    if retry_after and retry_after.isdigit():
+                        wait_seconds = float(retry_after)
+                    else:
+                        wait_seconds = float(2**attempt)
+                    await asyncio.sleep(wait_seconds)
+                    continue
+                break
+
+            if response is None:
                 response = await client.request(method, f"{SPOTIFY_API_BASE}{path}", headers=headers, **kwargs)
             response.raise_for_status()
             return response
