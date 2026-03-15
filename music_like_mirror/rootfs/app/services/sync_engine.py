@@ -163,6 +163,43 @@ class SyncEngine:
         finally:
             self._running = False
 
+    async def test_connections(self) -> dict[str, Any]:
+        settings = self.settings_store.load(redact=False)
+        result: dict[str, Any] = {
+            "spotify": {"ok": False, "message": "not configured"},
+            "ytmusic": {"ok": False, "message": "not configured"},
+        }
+
+        if settings.get("spotify_client_id") and settings.get("spotify_client_secret") and settings.get("spotify_refresh_token"):
+            try:
+                spotify = SpotifyClient(
+                    client_id=settings["spotify_client_id"],
+                    client_secret=settings["spotify_client_secret"],
+                    refresh_token=settings["spotify_refresh_token"],
+                    market=settings.get("spotify_market", "GB"),
+                )
+                await spotify.get_saved_tracks(limit=1)
+                result["spotify"] = {"ok": True, "message": "connection successful"}
+                self._log("info", "Spotify connection test passed")
+            except Exception as exc:
+                result["spotify"] = {"ok": False, "message": str(exc)}
+                self._log("error", "Spotify connection test failed", error=str(exc))
+
+        if settings.get("ytmusic_auth_json"):
+            try:
+                ytmusic = YTMusicClient(
+                    settings["ytmusic_auth_json"],
+                    settings.get("ytmusic_oauth_credentials_json", ""),
+                )
+                await ytmusic.get_liked_songs(limit=1)
+                result["ytmusic"] = {"ok": True, "message": "connection successful"}
+                self._log("info", "YouTube Music connection test passed")
+            except Exception as exc:
+                result["ytmusic"] = {"ok": False, "message": str(exc)}
+                self._log("error", "YouTube Music connection test failed", error=str(exc))
+
+        return result
+
     async def _ingest_spotify(self, spotify: SpotifyClient) -> int:
         count = 0
         rows = await spotify.get_saved_tracks(limit=50)
