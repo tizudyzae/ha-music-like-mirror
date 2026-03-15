@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections import deque
 from datetime import datetime, timezone
 from typing import Any
 
@@ -18,6 +19,8 @@ class SyncEngine:
         self._task: asyncio.Task | None = None
         self._running = False
         self._stop = asyncio.Event()
+        self._recent_logs: deque[dict[str, Any]] = deque(maxlen=800)
+        self._current_run_logs: list[dict[str, Any]] = []
 
     async def start_background_loop(self) -> None:
         if self._task and not self._task.done():
@@ -39,23 +42,45 @@ class SyncEngine:
             "background_task": bool(self._task and not self._task.done()),
         }
 
+    def recent_logs(self, limit: int = 200) -> list[dict[str, Any]]:
+        safe_limit = min(max(int(limit), 1), 1000)
+        return list(self._recent_logs)[-safe_limit:]
+
+    def _log(self, level: str, message: str, **context: Any) -> None:
+        entry = {
+            "ts": utcnow(),
+            "level": level,
+            "message": message,
+            "context": context,
+        }
+        self._recent_logs.append(entry)
+        if self._running:
+            self._current_run_logs.append(entry)
+
     async def _background_loop(self) -> None:
+        self._log("info", "Background sync loop started")
         while not self._stop.is_set():
             settings = self.settings_store.load(redact=False)
             wait_seconds = int(settings.get("poll_minutes", 15)) * 60
             try:
                 if settings.get("spotify_client_id") and settings.get("spotify_refresh_token") and settings.get("ytmusic_auth_json"):
+                    self._log("info", "Scheduled sync triggered from background loop", poll_minutes=settings.get("poll_minutes", 15))
                     await self.run_once(trigger="scheduled")
+                else:
+                    self._log("debug", "Scheduled sync skipped due to incomplete settings")
             except Exception:
                 # swallow errors here so the loop keeps limping onward instead of dying dramatically
+                self._log("error", "Scheduled sync crashed unexpectedly", error="background loop exception")
                 pass
             try:
                 await asyncio.wait_for(self._stop.wait(), timeout=wait_seconds)
             except asyncio.TimeoutError:
                 continue
+        self._log("info", "Background sync loop stopped")
 
     async def run_once(self, trigger: str = "manual") -> dict[str, Any]:
         if self._running:
+            self._log("warning", "Sync ignored because one is already running", trigger=trigger)
             return {"ok": False, "message": "sync already running"}
 
         settings = self.settings_store.load(redact=False)
@@ -65,10 +90,13 @@ class SyncEngine:
         if not settings.get("ytmusic_auth_json"):
             missing.append("ytmusic auth json")
         if missing:
+            self._log("warning", "Sync blocked by missing configuration", trigger=trigger, missing=missing)
             return {"ok": False, "message": f"Missing: {', '.join(missing)}"}
 
         self._running = True
+        self._current_run_logs = []
         started_at = utcnow()
+        self._log("info", "Sync run started", trigger=trigger, started_at=started_at)
         run_id = await self.db.start_run(trigger=trigger, started_at=started_at)
         summary: dict[str, Any] = {
             "new_events": 0,
@@ -87,11 +115,18 @@ class SyncEngine:
                 market=settings.get("spotify_market", "GB"),
             )
             ytmusic = YTMusicClient(settings["ytmusic_auth_json"])
+            self._log("debug", "Clients initialized", spotify_market=settings.get("spotify_market", "GB"), dry_run=bool(settings.get("dry_run")))
 
-            summary["new_events"] += await self._ingest_spotify(spotify)
-            summary["new_events"] += await self._ingest_ytmusic(ytmusic)
+            spotify_new = await self._ingest_spotify(spotify)
+            summary["new_events"] += spotify_new
+            self._log("info", "Spotify likes ingested", discovered=spotify_new)
+
+            ytmusic_new = await self._ingest_ytmusic(ytmusic)
+            summary["new_events"] += ytmusic_new
+            self._log("info", "YouTube Music likes ingested", discovered=ytmusic_new)
 
             pending = await self.db.get_pending_events()
+            self._log("info", "Pending events ready for mirroring", pending_count=len(pending))
             for event in pending:
                 result = await self._mirror_event(event, spotify, ytmusic, settings)
                 summary["attempts"] += 1
@@ -102,11 +137,25 @@ class SyncEngine:
                 elif result == "failed":
                     summary["failed"] += 1
                 await self.db.mark_event_processed(event["id"], utcnow())
+                self._log(
+                    "debug",
+                    "Event mirrored and marked processed",
+                    event_id=event["id"],
+                    source_service=event["source_service"],
+                    title=event["title"],
+                    artist=event["artist"],
+                    result=result,
+                )
+
+            summary["run_logs"] = self._current_run_logs
 
             await self.db.finish_run(run_id, utcnow(), "ok", json.dumps(summary))
+            self._log("info", "Sync run completed", run_id=run_id, summary=summary)
             return {"ok": True, "summary": summary}
         except Exception as exc:
-            await self.db.finish_run(run_id, utcnow(), "error", json.dumps({"error": str(exc), **summary}))
+            error_summary = {"error": str(exc), **summary, "run_logs": self._current_run_logs}
+            await self.db.finish_run(run_id, utcnow(), "error", json.dumps(error_summary))
+            self._log("error", "Sync run failed", run_id=run_id, error=str(exc), summary=summary)
             return {"ok": False, "message": str(exc), "summary": summary}
         finally:
             self._running = False
@@ -162,6 +211,7 @@ class SyncEngine:
             try:
                 result = await ytmusic.search_song(query)
                 if not result:
+                    self._log("warning", "No YouTube Music match found for Spotify event", event_id=event["id"], query=query)
                     await self.db.add_attempt({
                         "like_event_id": event["id"],
                         "target_service": "ytmusic",
@@ -174,6 +224,9 @@ class SyncEngine:
                     return "failed"
                 if not dry_run:
                     await ytmusic.like_song(result["videoId"])
+                    self._log("info", "Liked song on YouTube Music", event_id=event["id"], query=query, target_track_id=result.get("videoId"))
+                else:
+                    self._log("info", "Dry-run: would like song on YouTube Music", event_id=event["id"], query=query, target_track_id=result.get("videoId"))
                 await self.db.add_attempt({
                     "like_event_id": event["id"],
                     "target_service": "ytmusic",
@@ -185,6 +238,7 @@ class SyncEngine:
                 })
                 return "added_to_ytmusic"
             except Exception as exc:
+                self._log("error", "Failed mirroring Spotify event to YouTube Music", event_id=event["id"], query=query, error=str(exc))
                 await self.db.add_attempt({
                     "like_event_id": event["id"],
                     "target_service": "ytmusic",
@@ -199,6 +253,7 @@ class SyncEngine:
         try:
             result = await spotify.search_track(query)
             if not result:
+                self._log("warning", "No Spotify match found for YouTube Music event", event_id=event["id"], query=query)
                 await self.db.add_attempt({
                     "like_event_id": event["id"],
                     "target_service": "spotify",
@@ -212,8 +267,12 @@ class SyncEngine:
             if not dry_run:
                 if settings.get("spotify_playlist_id"):
                     await spotify.add_to_playlist(settings["spotify_playlist_id"], result["id"])
+                    self._log("info", "Added track to Spotify playlist", event_id=event["id"], query=query, target_track_id=result.get("id"), playlist_id=settings.get("spotify_playlist_id"))
                 else:
                     await spotify.save_track(result["id"])
+                    self._log("info", "Saved track to Spotify library", event_id=event["id"], query=query, target_track_id=result.get("id"))
+            else:
+                self._log("info", "Dry-run: would add track to Spotify", event_id=event["id"], query=query, target_track_id=result.get("id"), playlist_id=settings.get("spotify_playlist_id") or None)
             await self.db.add_attempt({
                 "like_event_id": event["id"],
                 "target_service": "spotify",
@@ -225,6 +284,7 @@ class SyncEngine:
             })
             return "added_to_spotify"
         except Exception as exc:
+            self._log("error", "Failed mirroring YouTube Music event to Spotify", event_id=event["id"], query=query, error=str(exc))
             await self.db.add_attempt({
                 "like_event_id": event["id"],
                 "target_service": "spotify",
