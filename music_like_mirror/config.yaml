@@ -3,7 +3,7 @@ version: "0.1.0"
 slug: music_like_mirror
 description: Mirror Spotify and YouTube Music likes in an append-only way.
 url: "https://github.com/yourname/ha-music-like-mirror"
-startup: application
+startup: services
 boot: auto
 init: false
 arch:
