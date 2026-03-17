@@ -178,7 +178,8 @@ INDEX_HTML = r"""
         <option value="simple">simple</option>
       </select>
       <label><input id="dry_run" type="checkbox" style="width:auto"> Dry run only</label>
-      <button onclick="saveSettings()">Save settings</button>
+      <button id="save_settings_btn" onclick="saveSettings()">Save settings</button>
+      <div id="settings_save_result" class="small muted"></div>
     </div>
   </div>
 
@@ -278,7 +279,18 @@ function renderLogs(items) {
   </table>`;
 }
 
+function parsePollMinutes() {
+  const raw = parseInt(document.getElementById('poll_minutes').value || '15', 10);
+  return Number.isFinite(raw) && raw >= 1 && raw <= 1440 ? raw : 15;
+}
+
 async function saveSettings() {
+  const saveResultEl = document.getElementById('settings_save_result');
+  const saveButtonEl = document.getElementById('save_settings_btn');
+  saveResultEl.textContent = 'Saving...';
+  saveResultEl.className = 'small muted';
+  saveButtonEl.disabled = true;
+
   const payload = {
     spotify_client_id: document.getElementById('spotify_client_id').value.trim(),
     spotify_client_secret: document.getElementById('spotify_client_secret').value.trim(),
@@ -287,17 +299,25 @@ async function saveSettings() {
     spotify_market: document.getElementById('spotify_market').value.trim() || 'GB',
     ytmusic_auth_json: document.getElementById('ytmusic_auth_json').value.trim(),
     ytmusic_oauth_credentials_json: document.getElementById('ytmusic_oauth_credentials_json').value.trim(),
-    poll_minutes: parseInt(document.getElementById('poll_minutes').value || '15', 10),
+    poll_minutes: parsePollMinutes(),
     match_mode: document.getElementById('match_mode').value,
     dry_run: document.getElementById('dry_run').checked,
   };
-  await fetchJSON('./api/settings', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  });
-  await loadAll();
-  alert('Saved.');
+  try {
+    await fetchJSON('./api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    await loadAll();
+    saveResultEl.textContent = 'Settings saved.';
+    saveResultEl.className = 'small ok';
+  } catch (err) {
+    saveResultEl.textContent = 'Failed to save settings: ' + err.message;
+    saveResultEl.className = 'small bad';
+  } finally {
+    saveButtonEl.disabled = false;
+  }
 }
 
 async function runSync() {
